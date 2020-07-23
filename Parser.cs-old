@@ -1,0 +1,267 @@
+﻿using System.Linq;
+using System;
+using System.IO;
+using System.Collections.Generic;
+using System.ComponentModel;
+
+namespace SimpleC {
+
+	public class Parser {
+		Token[] tokens;
+		Token currentTok;
+		int tokIdx;
+		List<Node> nodes;
+		List<SymbolTokens> symbols;
+
+		// tokens might include Tokens from multiple files
+		public Parser(Token[] tokens) {
+			this.tokens = tokens;
+			symbols = new List<SymbolTokens>();
+			nodes = new List<Node>();
+			tokIdx = 0;
+			try {
+				currentTok = tokens[tokIdx];
+			} catch (IndexOutOfRangeException) {
+				Console.WriteLine("Empty token list - should not be possible.");
+			}
+		}
+
+		bool NextToken() {
+			tokIdx++;
+			currentTok = tokens[tokIdx];
+			return true;
+		}
+		Token PeekToken() {
+			return tokens[tokIdx + 1];
+		}
+		Token PeekPrevToken() {
+			return tokens[tokIdx - 1];
+		}
+
+
+		class SymbolTokens {
+			public SymbolTokens parent;   // parent
+			public Token type;      // type
+			public Token inst;      // will be null if a definition
+			public Token[] args;    // input arguments required, empty array if none
+			public Token[] stmnts;     // points to start of any functional parts of this object
+			public bool appEntry;   // true if the main function
+			public int stmtIndent;  // indent owned statements will have
+			public bool reqd;
+
+			public SymbolTokens() { }
+			public SymbolTokens(Parser parser, SymbolTokens parent) {
+				Token typeTok = parser.currentTok;
+				parser.NextToken();
+				Token objTok = null;
+				if (parser.currentTok.tokenType == TokenType.Identifier || parser.currentTok.tokenType == TokenType.Main) {
+					objTok = parser.currentTok;
+					this.appEntry = parser.currentTok.tokenType == TokenType.Main;
+					this.reqd = true;
+				} else {
+					this.appEntry = false;
+					this.reqd = false;
+				}
+				parser.NextToken();
+				List<Token> argsTok = new List<Token>();
+				if (parser.currentTok.tokenType == TokenType.LParen) {
+					parser.NextToken();
+					if (parser.currentTok.tokenType != TokenType.RParen) {
+						do {
+							argsTok.Add(parser.currentTok);
+							parser.NextToken();
+						} while (parser.currentTok.tokenType != TokenType.RParen);
+					}
+				}
+				while (parser.currentTok.tokenType != TokenType.EndLine)    // get to start of statements
+					parser.NextToken();
+				parser.NextToken();
+				List<Token> stmntToks = new List<Token>();
+				while (parser.currentTok.indent >= (typeTok.indent + 1)) {
+					stmntToks.Add(parser.currentTok);
+					parser.NextToken();
+				}
+				this.parent = parent;
+				this.type = typeTok;
+				this.inst = objTok;
+				this.args = argsTok.ToArray();
+				this.stmnts = stmntToks.ToArray();
+				this.stmtIndent = typeTok.indent + 1;
+			}
+		}
+
+
+		public void Parse() {
+			SymbolTokens appParent = new SymbolTokens();
+			symbols.Add(appParent);
+			ParseSymbols(appParent);
+			Statements fatherStmnts = new Statements(null, null);
+			List<Node> stmnts = new List<Node>();
+			for (var i=1; i < symbols.Count; i++) {
+				Node newNode = ParseObject(fatherStmnts, symbols[i]);
+				stmnts.Add(newNode);
+			}
+		}
+
+		Node ParseObject(Node parent, SymbolTokens sym) {
+			Type type = new Type(parent, sym.type);
+			Arg[] args = ParseArgs(sym.args, parent);
+
+			Statements stmntNode = new Statements();
+
+			//Parse args and statements
+			Object obj = new Object(type, sym.inst.value, args.ToArray(), stmntNode, parent, sym.inst);
+			obj.type = type;
+
+			return obj;
+		}
+
+		Arg[] ParseArgs(Token[] argtoks, Node parent) {
+			List<Arg> args = new List<Arg>();
+			for (var idx = 0; idx < argtoks.Length; idx++) {
+				if (argtoks[idx].tokenType == TokenType.Identifier) {
+					if ((idx+1) < argtoks.Length && argtoks[idx+1].tokenType == TokenType.Identifier) {	// definition
+						Type t = new Type(parent, argtoks[idx++]);
+						// TODO check for arrays
+						Token instTok = argtoks[idx++];
+						Arg a = new Arg(t, instTok.value, parent, instTok);
+						if (argtoks[idx].tokenType == TokenType.Comma) {
+							args.Add(a);
+						} else { 
+							ShowError($"Unknown argument format {t.token.value} {instTok.value} {argtoks[idx].value}");
+						}
+					}
+				}
+			}
+			return args.ToArray();
+		}
+
+		// grab all object definitions
+		void ParseSymbols(SymbolTokens appParent) {
+			int indent = currentTok.indent;
+			while (currentTok.tokenType != TokenType.EndFile && currentTok.indent == indent) {
+				if ((currentTok.tokenType == TokenType.Identifier || currentTok.tokenType == TokenType.Main || currentTok.tokenType == TokenType.IntType || currentTok.tokenType == TokenType.FloatType || currentTok.tokenType == TokenType.DoubleType)) {
+					SymbolTokens sym = new SymbolTokens(this, appParent);
+					symbols.Add(sym);
+					ParseSymbols(sym);
+				} else {
+					NextToken();
+				}
+			}
+		}
+
+
+		void ShowError(string message) {
+			ConsoleColor startForeground = Console.ForegroundColor;
+			Console.ForegroundColor = ConsoleColor.Red;
+			Console.WriteLine(message);
+			Console.ForegroundColor = startForeground;
+		}
+
+		public void Show() {
+			ConsoleColor startForeground = Console.ForegroundColor;
+			Console.ForegroundColor = ConsoleColor.DarkGray;
+			Console.WriteLine("Symbols:");
+			Console.ForegroundColor = ConsoleColor.Cyan;
+			foreach (var sym in symbols) {
+				if (sym.type != null) {
+					Console.Write($"{sym.type.value} ");
+					if (sym.inst != null)
+						Console.Write($"{sym.inst.value}");
+					Console.Write("(");
+					if (sym.args != null)
+						foreach (var arg in sym.args)
+							Console.Write($"{arg.value} ");
+					Console.Write(") ");
+					if (sym.appEntry == true)
+						Console.Write("App Entry");
+					Console.Write("\n");
+				}
+			}
+			Console.ForegroundColor = startForeground;
+		}
+
+	}
+
+
+
+	class Node {
+		public Node parent;
+		public Token token;
+		public Node(Node parent, Token token) {
+			this.parent = parent;
+			this.token = token;
+		}
+	}
+
+	class Type:Node {
+		public Type(Node parent, Token token) : base(parent, token) {
+		}
+	}
+
+
+	class Object:Node {
+		public Type type;
+		public string inst;
+		public Arg[] args;
+		public Statements stmnts;
+		public Object(Type type, string inst, Arg[] args, Statements stmnts, Node parent, Token token) : base(parent, token) {
+			this.type = type;
+			this.inst = inst;
+			this.args = args;
+			this.stmnts = stmnts;
+		}
+	}
+	class Arg:Node {    // parent should be the object this arg belongs to
+		public Type type;
+		public string inst;
+		public Arg(Type type, string inst, Node parent, Token token) : base(parent, token) {
+			this.type = type;
+			this.inst = inst;
+		}
+	}
+
+	class Statement:Node {
+		public Statement(Node parent, Token token) : base(parent, token) {
+		}
+	}
+	class Statements:Node {
+		public Node[] stmts;
+		public Statements(Node[] stmts, Node parent, Token token=null) : base(parent, token) {
+			this.stmts = stmts;
+		}
+	}
+
+
+
+	class Expression:Node {
+		public Expression(Node parent, Token token) : base(parent, token) {
+		}
+	}
+
+	class Number:Expression {
+		public Number(Node parent, Token token) : base(parent, token) {
+		}
+	}
+	class IntConstant:Number {
+		public int value;
+		public IntConstant(int value, Node parent, Token token) : base(parent, token) {
+			this.value = value;
+		}
+	}
+	class FloatConstant:Number {
+		public float value;
+		public FloatConstant(float value, Node parent, Token token) : base(parent, token) {
+			this.value = value;
+		}
+	}
+	class DoubleConstant:Number {
+		public double value;
+		public DoubleConstant(double value, Node parent, Token token) : base(parent, token) {
+			this.value = value;
+		}
+	}
+
+
+
+}
