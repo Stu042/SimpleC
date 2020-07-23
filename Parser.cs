@@ -590,8 +590,8 @@ namespace SimpleC {
 						Array.Copy(bodyToks, i, newBodyToks, 0, count);
 						newOrder = ParseExprScanToks(bodyToks, newOrder, precedenceOffset + 10);
 						Array.Copy(newOrder, 0, order, i, count);
+						i += count;
 						break;
-					// todo add LParen, will require recursion and splitting up this function
 					default:
 						order[i] = 0;
 						break;

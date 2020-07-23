@@ -1,6 +1,7 @@
-Data()
+Data:
 	int a
 	float b
+
 
 int Main()
 	Data d = Data()

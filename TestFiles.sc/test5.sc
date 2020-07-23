@@ -1,9 +1,10 @@
-Data(int aa, int bb)
+Data:
 	int a
 	int b
 
-	a = aa
-	b = bb
+	Data(int aa, int bb)
+		a = aa
+		b = bb
 
 
 int Main()
